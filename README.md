@@ -13,6 +13,16 @@ Google servis hesabı anahtarını `.gizli/service_account.json` olarak yerleşt
 hesabının e-posta adresinin Google Sheet'te Editör olarak paylaşılmış olması
 gerekir.
 
+## Kalıcı çözüm: Google Apps Script (önerilen)
+
+`apps_script/SenkronSayfa1ToGiden.gs` dosyası aynı senkron mantığını Google'ın
+kendi sunucularında, bir sunucu/bilgisayar açık kalmasına gerek kalmadan
+çalıştırır (tablet dahil her cihazdan Sheet'i düzenlemek yeterli). Kurulum
+adımları dosyanın başındaki yorumda yazıyor: Sheet -> Uzantılar -> Apps
+Script -> kodu yapıştır -> her dakika çalışan bir zaman tetikleyicisi ekle.
+
+## Alternatif: Python script (kendi sunucunda çalıştırman gerekir)
+
 ## Sayfa1 -> GİDEN senkronu
 
 `Sayfa1` sayfasında I sütunu (AÇIKLAMA) "HAZIR ✓" olarak işaretlenen
