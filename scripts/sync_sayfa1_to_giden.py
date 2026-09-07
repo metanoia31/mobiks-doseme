@@ -22,7 +22,8 @@ SHEET_ID = os.environ.get("MOBIKS_SHEET_ID", "1XgVQFzauhAXmd4x6GlglReXYoOJjIiYZp
 CREDENTIALS_FILE = os.environ.get("MOBIKS_CREDENTIALS_FILE", ".gizli/service_account.json")
 POLL_INTERVAL_SECONDS = int(os.environ.get("MOBIKS_POLL_INTERVAL_SECONDS", "60"))
 
-SOURCE_SHEET_NAME = "Sayfa1"
+SOURCE_SHEET_NAME = os.environ.get("MOBIKS_SOURCE_SHEET_NAME", "Sayfa1")
+TARGET_SHEET_NAME_OVERRIDE = os.environ.get("MOBIKS_TARGET_SHEET_NAME_OVERRIDE")
 READY_MARKER = "HAZIR ✓"
 
 TR_MONTHS = {
@@ -49,8 +50,8 @@ def get_or_create_giden_sheet(sh, name):
         return sh.worksheet(name)
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title=name, rows=200, cols=9)
-        ws.update("A1", [[name]])
-        ws.update("A3:I3", [GIDEN_HEADER])
+        ws.update(range_name="A1", values=[[name]])
+        ws.update(range_name="A3:I3", values=[GIDEN_HEADER])
         print(f"[{now_str()}] Yeni sayfa oluşturuldu: {name}")
         return ws
 
@@ -70,7 +71,7 @@ def process_once(sh):
     rows = src.get("A2:L", value_render_option="UNFORMATTED_VALUE")
 
     today = datetime.date.today()
-    target_name = giden_sheet_name(today)
+    target_name = TARGET_SHEET_NAME_OVERRIDE or giden_sheet_name(today)
     target_ws = None
     moved = 0
 
