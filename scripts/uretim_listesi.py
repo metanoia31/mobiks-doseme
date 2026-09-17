@@ -69,7 +69,7 @@ GRID = colors.HexColor('#9a9a95')
 BAND = colors.HexColor('#dfe6f5')
 SIP_BAND = colors.HexColor('#eef2fa')
 
-FOTO_W, FOTO_H = 62, 46          # punto — fotoğraf hücresinin iç ölçüsü
+FOTO_W, FOTO_H = 86, 66          # punto — fotoğraf hücresinin iç ölçüsü
 
 norm = lambda v: re.sub(r'\s+', ' ', str(v if v is not None else '')).strip()
 
@@ -163,6 +163,8 @@ def main():
                     help='Fotoğrafların bulunduğu yerel klasör (indirme kapalıysa)')
     ap.add_argument('--cache', default='.foto_cache')
     ap.add_argument('--out', default='URETIM_LISTESI.pdf')
+    ap.add_argument('--satir-sayfa', type=int, default=6,
+                    help='Sayfa başına kaç ürün satırı (varsayılan 6)')
     args = ap.parse_args()
 
     scopes = ['https://www.googleapis.com/auth/spreadsheets']
@@ -195,20 +197,26 @@ def main():
     for u, hata in basarisiz:
         print(f'   fotoğraf alınamadı: {u} -> {hata}')
 
-    h = ParagraphStyle('h', fontName='DejaVu', fontSize=7.5, leading=9.5)
-    hb = ParagraphStyle('hb', fontName='DejaVu-Bold', fontSize=8, leading=10)
-    hh = ParagraphStyle('hh', fontName='DejaVu-Bold', fontSize=7.5, leading=9.5)
-    st_baslik = ParagraphStyle('b', fontName='DejaVu-Bold', fontSize=15, leading=18)
-    st_alt = ParagraphStyle('a', fontName='DejaVu', fontSize=8.5, leading=11,
-                            textColor=colors.HexColor('#555550'))
+    h = ParagraphStyle('h', fontName='DejaVu', fontSize=9, leading=11.5)
+    hb = ParagraphStyle('hb', fontName='DejaVu-Bold', fontSize=10, leading=12.5)
+    hh = ParagraphStyle('hh', fontName='DejaVu-Bold', fontSize=8.5, leading=10.5)
 
+    PW, PH = landscape(A4)
+    ust, alt, yan = 22 * mm, 10 * mm, 8 * mm
     doc = SimpleDocTemplate(args.out, pagesize=landscape(A4),
-                            topMargin=10 * mm, bottomMargin=10 * mm,
-                            leftMargin=8 * mm, rightMargin=8 * mm, title='Üretim Listesi')
+                            topMargin=ust, bottomMargin=alt,
+                            leftMargin=yan, rightMargin=yan, title='Üretim Listesi')
     W = doc.width
     # FOTO, SİP.NO, MÜŞTERİ, ÜRÜN, CİLA, KUMAŞ, USTA NOTU, ADET, K.GELİŞ, TERMİN
-    KOL = [W * 0.085, W * 0.05, W * 0.075, W * 0.125, W * 0.09,
-           W * 0.15, W * 0.225, W * 0.04, W * 0.08, W * 0.08]
+    KOL = [W * 0.11, W * 0.065, W * 0.08, W * 0.13, W * 0.085,
+           W * 0.145, W * 0.19, W * 0.045, W * 0.075, W * 0.075]
+
+    # Sayfa başına tam --satir-sayfa ürün: satır yüksekliğini sabitle.
+    # doc.height kenar boşluklarını düşer ama Frame ayrıca 6+6pt iç dolgu bırakır;
+    # bu 12pt hesaba katılmazsa son satır alt sayfaya kayar. 2pt de pay bırakılır.
+    FRAME_DOLGU = 12
+    BASLIK_Y = 26
+    SATIR_Y = (doc.height - FRAME_DOLGU - BASLIK_Y - 2) / args.satir_sayfa
     BASLIK = ['FOTOĞRAF', 'SİP.NO', 'MÜŞTERİ NO', 'ÜRÜN', 'CİLA / AYAK', 'KUMAŞ',
               'USTA NOTU', 'ADET', 'KUMAŞ GELİŞ', 'TERMİN']
 
@@ -252,19 +260,28 @@ def main():
             Paragraph(k['termin'] or '-', h),
         ])
 
-    t = Table(veri, colWidths=KOL, repeatRows=1)
+    t = Table(veri, colWidths=KOL, repeatRows=1,
+              rowHeights=[BASLIK_Y] + [SATIR_Y] * (len(veri) - 1))
     t.setStyle(TableStyle(stil))
 
-    doc.build([
-        Paragraph('ÜRETİM LİSTESİ', st_baslik),
-        Paragraph(f"{args.sonra} sonrası siparişler &nbsp;·&nbsp; "
-                  f"{len({k['sip'] for k in kayitlar})} sipariş, {len(kayitlar)} kalem, "
-                  f"{sum(k['adet'] for k in kayitlar)} adet &nbsp;·&nbsp; "
-                  f"Liste tarihi: {datetime.date.today():%d.%m.%Y}", st_alt),
-        Spacer(1, 6),
-        t,
-    ])
-    print('PDF:', args.out)
+    ozet = (f"{args.sonra} sonrası siparişler  ·  {len({k['sip'] for k in kayitlar})} sipariş, "
+            f"{len(kayitlar)} kalem, {sum(k['adet'] for k in kayitlar)} adet  ·  "
+            f"Liste tarihi: {datetime.date.today():%d.%m.%Y}")
+
+    def sayfa_ustu(c, d):
+        """Başlık her sayfada üst boşluğa çizilir — tablo alanı her sayfada aynı kalır."""
+        c.saveState()
+        c.setFont('DejaVu-Bold', 13)
+        c.setFillColor(colors.HexColor('#0b0b0b'))
+        c.drawString(yan, PH - 15 * mm, 'ÜRETİM LİSTESİ')
+        c.setFont('DejaVu', 8)
+        c.setFillColor(colors.HexColor('#555550'))
+        c.drawString(yan + 120, PH - 15 * mm, ozet)
+        c.drawRightString(PW - yan, PH - 15 * mm, f'Sayfa {c.getPageNumber()}')
+        c.restoreState()
+
+    doc.build([t], onFirstPage=sayfa_ustu, onLaterPages=sayfa_ustu)
+    print('PDF:', args.out, f'| satır/sayfa: {args.satir_sayfa}')
 
 
 if __name__ == '__main__':
