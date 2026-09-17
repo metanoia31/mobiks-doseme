@@ -30,8 +30,36 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-pdfmetrics.registerFont(TTFont('DejaVu', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
-pdfmetrics.registerFont(TTFont('DejaVu-Bold', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'))
+def _font_bul():
+    """Türkçe karakterleri destekleyen bir yazı tipi çifti bulur (Linux/Windows/macOS)."""
+    adaylar = [
+        ('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+         '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'),
+        (r'C:\Windows\Fonts\arial.ttf', r'C:\Windows\Fonts\arialbd.ttf'),
+        (r'C:\Windows\Fonts\segoeui.ttf', r'C:\Windows\Fonts\segoeuib.ttf'),
+        (r'C:\Windows\Fonts\calibri.ttf', r'C:\Windows\Fonts\calibrib.ttf'),
+        ('/Library/Fonts/Arial.ttf', '/Library/Fonts/Arial Bold.ttf'),
+        ('/System/Library/Fonts/Supplemental/Arial.ttf',
+         '/System/Library/Fonts/Supplemental/Arial Bold.ttf'),
+    ]
+    try:  # matplotlib kuruluysa DejaVu'yu oradan da alabiliriz
+        import matplotlib
+        mpl = os.path.join(os.path.dirname(matplotlib.__file__), 'mpl-data', 'fonts', 'ttf')
+        adaylar.append((os.path.join(mpl, 'DejaVuSans.ttf'),
+                        os.path.join(mpl, 'DejaVuSans-Bold.ttf')))
+    except Exception:
+        pass
+
+    for duz, kalin in adaylar:
+        if os.path.exists(duz) and os.path.exists(kalin):
+            return duz, kalin
+    raise SystemExit('Uygun yazı tipi bulunamadı. Windows ise C:\\Windows\\Fonts\\arial.ttf '
+                     'olmalı; yoksa `pip install matplotlib` yeterli.')
+
+
+_DUZ, _KALIN = _font_bul()
+pdfmetrics.registerFont(TTFont('DejaVu', _DUZ))
+pdfmetrics.registerFont(TTFont('DejaVu-Bold', _KALIN))
 
 SHEET_ID = os.environ.get('MOBIKS_SHEET_ID', '1XgVQFzauhAXmd4x6GlglReXYoOJjIiYZpNXxg9IgGXc')
 CREDS = os.environ.get('MOBIKS_CREDENTIALS_FILE', '.gizli/service_account.json')
@@ -52,16 +80,38 @@ def dosya_adi(urun):
     return re.sub(r'[^a-z0-9]', '', s.lower())
 
 
+def _drive_id(url):
+    m = re.search(r'[?&]id=([\w-]+)', url) or re.search(r'/d/([\w-]+)', url)
+    return m.group(1) if m else None
+
+
 def foto_indir(url, hedef):
+    """Drive bağlantısını birkaç farklı biçimde dener; ilk çalışanı kaydeder."""
     import urllib.request
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        veri = resp.read()
-    if len(veri) < 1000 or veri[:15].lower().startswith(b'<!doctype html'):
-        raise ValueError('görsel değil (HTML döndü)')
-    with open(hedef, 'wb') as f:
-        f.write(veri)
-    return hedef
+
+    denenecek = []
+    fid = _drive_id(url)
+    if fid:
+        denenecek += [f'https://lh3.googleusercontent.com/d/{fid}=w1000',
+                      f'https://drive.google.com/uc?export=download&id={fid}']
+    denenecek.append(url)
+
+    son_hata = None
+    for u in denenecek:
+        try:
+            req = urllib.request.Request(u, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                veri = resp.read()
+            bas = veri[:20].lower()
+            if len(veri) < 1000 or bas.startswith(b'<!doctype html') or bas.startswith(b'<html'):
+                son_hata = 'görsel değil (HTML döndü)'
+                continue
+            with open(hedef, 'wb') as f:
+                f.write(veri)
+            return hedef
+        except Exception as e:
+            son_hata = str(e)[:60]
+    raise ValueError(son_hata or 'indirilemedi')
 
 
 def foto_yukle(urunler, resim_url, foto_dizin, cache):
