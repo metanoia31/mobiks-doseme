@@ -19,19 +19,65 @@ GREY = Color(0.35, 0.35, 0.35)
 import argparse
 import os
 
-ap = argparse.ArgumentParser(description='KOLİ ETİKETİ PDF (A4 sayfada 4 etiket)')
-ap.add_argument('--sip', required=True)
-ap.add_argument('--musteri', required=True)
-ap.add_argument('--urun', required=True)
-ap.add_argument('--kumas', required=True)
+ap = argparse.ArgumentParser(
+    description='KOLİ ETİKETİ PDF (A4 sayfada 4 etiket). İki kullanım şekli:\n'
+                '  1) Sayfa1den çek:  --sip 152618 --urun-ara LEVEL\n'
+                '  2) Elle gir:       --sip ... --musteri ... --urun ... --kumas ... --adet ...',
+    formatter_class=argparse.RawDescriptionHelpFormatter)
+ap.add_argument('--sip', required=True, help='Sipariş no')
+ap.add_argument('--urun-ara', default=None,
+                help='Sayfa1den çekerken ürün adı filtresi (parça eşleşme, ör. LEVEL)')
+ap.add_argument('--musteri')
+ap.add_argument('--urun')
+ap.add_argument('--kumas', help='Verilirse elle giriş modu kullanılır')
 ap.add_argument('--cila', default='')
-ap.add_argument('--adet', type=int, required=True)
-ap.add_argument('--out-dir', default='/tmp/claude-0/-home-user-mobiks-doseme/'
-                                     'a9b86234-aa23-527c-9454-3ed13e122ec0/scratchpad')
+ap.add_argument('--adet', type=int, help='Elle giriş modunda zorunlu; Sayfa1 modunda tümünü ezer')
+ap.add_argument('--etiket-adi', default=None, help='Dosya adındaki ürün bölümü (çoklu kalemde)')
+ap.add_argument('--out-dir', default='.')
 args = ap.parse_args()
 
-ITEM = dict(sip=args.sip, musteri=args.musteri, urun=args.urun,
-            kumas=args.kumas, cila=args.cila, adet=args.adet)
+
+def _sayfa1den_cek(sip, urun_ara):
+    """Sayfa1den ilgili siparişin kalemlerini okur."""
+    import gspread
+    from google.oauth2.service_account import Credentials
+    creds = Credentials.from_service_account_file(
+        os.environ.get('MOBIKS_CREDENTIALS_FILE', '.gizli/service_account.json'),
+        scopes=['https://www.googleapis.com/auth/spreadsheets'])
+    sh = gspread.authorize(creds).open_by_key(
+        os.environ.get('MOBIKS_SHEET_ID', '1XgVQFzauhAXmd4x6GlglReXYoOJjIiYZpNXxg9IgGXc'))
+    nrm = lambda v: re.sub(r'\s+', ' ', str(v if v is not None else '')).strip()
+
+    bulunan = []
+    for r in sh.worksheet('Sayfa1').get('A2:M', value_render_option='UNFORMATTED_VALUE'):
+        if not r or not nrm(r[0]):
+            continue
+        g = lambda j: nrm(r[j]) if len(r) > j else ''
+        if g(0) != sip:
+            continue
+        if urun_ara and urun_ara.upper() not in g(3).upper():
+            continue
+        adet = r[7] if len(r) > 7 and isinstance(r[7], (int, float)) else 0
+        if adet <= 0:
+            continue
+        bulunan.append(dict(sip=g(0), musteri=g(1), urun=g(3), cila=g(4),
+                            kumas=g(6), adet=int(adet)))
+    return bulunan
+
+
+if args.kumas:   # elle giriş modu
+    if not (args.musteri and args.urun and args.adet):
+        ap.error('elle giriş için --musteri, --urun ve --adet gerekli')
+    ITEMS = [dict(sip=args.sip, musteri=args.musteri, urun=args.urun,
+                  kumas=args.kumas, cila=args.cila, adet=args.adet)]
+else:            # Sayfa1den çek
+    ITEMS = _sayfa1den_cek(args.sip, args.urun_ara)
+    if not ITEMS:
+        ap.error(f'Sayfa1de eşleşen kalem bulunamadı (sip={args.sip}, '
+                 f'ürün filtresi={args.urun_ara!r})')
+    if args.adet:
+        for it in ITEMS:
+            it['adet'] = args.adet
 
 TR = str.maketrans({'Ü': 'U', 'Ş': 'S', 'İ': 'I', 'Ğ': 'G', 'Ö': 'O', 'Ç': 'C'})
 
@@ -120,20 +166,32 @@ def etiket_ciz(c, item, x0, y0, tarih):
 
 
 def main():
-    out = os.path.join(args.out_dir,
-                       f"ETIKET_SIP{ITEM['sip']}_{slug(ITEM['urun'], 30)}"
-                       f"_{slug(kumas_slug_kaynak(ITEM['kumas']), 40)}_x{ITEM['adet']}.pdf")
+    toplam = sum(it['adet'] for it in ITEMS)
+    if len(ITEMS) == 1:
+        it = ITEMS[0]
+        ad = (f"ETIKET_SIP{it['sip']}_{slug(it['urun'], 30)}"
+              f"_{slug(kumas_slug_kaynak(it['kumas']), 40)}_x{it['adet']}")
+    else:
+        etiket = args.etiket_adi or args.urun_ara or 'KALEMLER'
+        ad = f'ETIKET_SIP{args.sip}_{slug(etiket, 30)}_x{toplam}'
+
+    out = os.path.join(args.out_dir, f'{ad}.pdf')
     tarih = datetime.date.today().strftime('%d.%m.%Y')
     c = canvas.Canvas(out, pagesize=A4)
-    for i in range(ITEM['adet']):
-        if i and i % PER_PAGE == 0:
-            c.showPage()
-        slot = i % PER_PAGE
-        x0 = MARGIN + (slot % COLS) * LABEL_W
-        y0 = PAGE_H - MARGIN - (slot // COLS + 1) * LABEL_H
-        etiket_ciz(c, ITEM, x0, y0, tarih)
+
+    i = 0
+    for it in ITEMS:
+        print(f"   {it['urun']} | {it['kumas']} | cila={it['cila'] or '-'} | {it['adet']} etiket")
+        for _ in range(it['adet']):
+            if i and i % PER_PAGE == 0:
+                c.showPage()
+            slot = i % PER_PAGE
+            x0 = MARGIN + (slot % COLS) * LABEL_W
+            y0 = PAGE_H - MARGIN - (slot // COLS + 1) * LABEL_H
+            etiket_ciz(c, it, x0, y0, tarih)
+            i += 1
     c.save()
-    print(f"{ITEM['adet']} etiket / {-(-ITEM['adet'] // PER_PAGE)} sayfa -> {out}")
+    print(f'{toplam} etiket / {-(-toplam // PER_PAGE)} sayfa -> {out}')
 
 
 if __name__ == '__main__':
