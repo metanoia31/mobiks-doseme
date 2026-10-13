@@ -5,10 +5,10 @@
  * "HAZIR ✓" yazar. Ardından SenkronSayfa1ToGiden.gs'teki dakikalık tetikleyici
  * bu satırları otomatik olarak bu ayın GİDEN sayfasına taşır.
  *
- * Eşleşme: SİP (A) aynı + STOK ADI (D) ürün anahtarını içeriyor + KUMAŞ (G)
- * kumaş kodunu içeriyor. Sadece ADET (H) irsaliyedeki miktara birebir eşitse
- * işaretlenir; eksik/fazla/bulunamayan kalemler raporda gösterilir ve
- * dokunulmaz (elle bakılmalı).
+ * Eşleşme: SİP (A) aynı + MÜŞTERİ NO (B) aynı + STOK ADI (D) ürün anahtarını
+ * içeriyor + KUMAŞ (G) kumaşı içeriyor (koli etiketlerindeki bilgiler). Sadece
+ * ADET (H) irsaliyedeki miktara birebir eşitse işaretlenir; eksik/fazla/
+ * bulunamayan kalemler raporda gösterilir ve dokunulmaz (elle bakılmalı).
  *
  * Kullanım:
  * 1) Bu dosyayı SenkronSayfa1ToGiden.gs ile aynı Apps Script projesine yeni
@@ -21,14 +21,15 @@
 
 var IRSALIYE_NO = 'IRS2026000000646'; // Zivella, 13.10.2026, 34 FF 2931
 var IRSALIYE = [
-  // [sip, ürün anahtarı, kumaş kodu, adet]
-  ['152952', 'ADA SANDALYE', 'TT30506', 2],
-  ['152952', 'ADA SANDALYE', 'TT30505', 2],
-  ['152952', 'ADA SANDALYE', 'TT30502', 2],
-  ['152952', 'PAY TEKLİ', 'TT30505', 11], // irsaliyede 2 satır: 5 + 6
-  ['152952', 'PAY TEKLİ', 'TT30502', 5],
-  ['152952', 'PAY TEKLİ', 'TT30506', 2],
-  ['152952', 'PAY TEKLİ', 'TT30510', 6]
+  // [sip, müşteri no, ürün anahtarı, kumaş, adet]  — koli etiketlerinden
+  ['152952', 'TT30505-01', 'PAY TEKLİ', 'DIANA 240', 6],
+  ['152952', 'TT30510-01', 'PAY TEKLİ', 'DIANA 530', 6],
+  ['152952', 'TT30506-01', 'PAY TEKLİ', 'DIANA 330', 2],
+  ['152952', 'TT30502-01', 'PAY TEKLİ', 'DIANA 280', 5],
+  ['152952', 'TT30505-01', 'PAY TEKLİ', 'DIANA 570', 5],
+  ['152952', 'TT30502-01', 'ADA', 'DIANA 038', 2],
+  ['152952', 'TT30505-01', 'ADA', 'DIANA 460', 2],
+  ['152952', 'TT30506-01', 'ADA', 'DIANA 460', 2]
 ];
 
 var IRS_READY_MARKER = 'HAZIR ✓';
@@ -44,11 +45,12 @@ function irsaliyeEslestir_() {
   var sonuc = [];
 
   IRSALIYE.forEach(function (k) {
-    var sip = irsNorm_(k[0]), urun = irsNorm_(k[1]), kumas = irsNorm_(k[2]), adet = k[3];
+    var sip = irsNorm_(k[0]), musteri = irsNorm_(k[1]), urun = irsNorm_(k[2]), kumas = irsNorm_(k[3]), adet = k[4];
     var satirlar = [];
     for (var i = 0; i < data.length; i++) {
       var r = data[i];
       if (irsNorm_(r[0]) !== sip) continue;
+      if (irsNorm_(r[1]) !== musteri) continue;
       if (irsNorm_(r[3]).indexOf(urun) === -1) continue;
       if (irsNorm_(r[6]).indexOf(kumas) === -1) continue;
       satirlar.push({ satir: i + 2, adet: Number(r[7]) || 0, hazir: irsNorm_(r[8]) === irsNorm_(IRS_READY_MARKER) });
@@ -67,7 +69,7 @@ function irsaliyeRaporYaz_(sonuc) {
   Logger.log('İrsaliye ' + IRSALIYE_NO);
   sonuc.forEach(function (s) {
     var k = s.kalem;
-    Logger.log((s.durum === 'TAMAM' ? '✓ ' : '✗ ') + k[0] + ' | ' + k[1] + ' | ' + k[2] + ' | ' + k[3] +
+    Logger.log((s.durum === 'TAMAM' ? '✓ ' : '✗ ') + k.slice(0, 4).join(' | ') + ' | ' + k[4] +
       ' adet -> ' + s.durum + (s.satirlar.length ? ' [satır ' + s.satirlar.map(function (x) { return x.satir; }).join(', ') + ']' : ''));
   });
 }
