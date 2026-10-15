@@ -5,19 +5,31 @@
 import re
 import datetime
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.colors import Color
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-pdfmetrics.registerFont(TTFont('DejaVu', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
-pdfmetrics.registerFont(TTFont('DejaVu-Bold', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'))
-
-NAVY = Color(26 / 255, 42 / 255, 94 / 255)
-GREY = Color(0.35, 0.35, 0.35)
+def _font_kaydet():
+    """Arial benzeri, Türkçe karakter destekli yazı tipini 'Etiket' / 'Etiket-Bold' adıyla kaydeder."""
+    adaylar = [
+        ('/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
+         '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf'),
+        (r'C:\Windows\Fonts\arial.ttf', r'C:\Windows\Fonts\arialbd.ttf'),
+        ('/Library/Fonts/Arial.ttf', '/Library/Fonts/Arial Bold.ttf'),
+        ('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+         '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'),
+    ]
+    for normal, bold in adaylar:
+        if os.path.exists(normal) and os.path.exists(bold):
+            pdfmetrics.registerFont(TTFont('Etiket', normal))
+            pdfmetrics.registerFont(TTFont('Etiket-Bold', bold))
+            return
+    raise SystemExit('Türkçe destekli yazı tipi bulunamadı (Arial / Liberation Sans / DejaVu Sans)')
 
 import argparse
 import os
+
+_font_kaydet()
 
 ap = argparse.ArgumentParser(
     description='KOLİ ETİKETİ PDF (A4 sayfada 4 etiket). İki kullanım şekli:\n'
@@ -117,52 +129,50 @@ def fit(text, font, max_size, max_w, min_size=10):
 
 
 def etiket_ciz(c, item, x0, y0, tarih):
-    # siyah çerçeve
+    # dış çerçeve
     c.setStrokeColorRGB(0, 0, 0)
-    c.setLineWidth(2)
-    c.rect(x0 + 4, y0 + 4, LABEL_W - 8, LABEL_H - 8)
+    c.setLineWidth(1.5)
+    c.rect(x0 + 6, y0 + 6, LABEL_W - 12, LABEL_H - 12)
 
-    # lacivert başlık barı — sadece "KOLİ ETİKETİ"
-    bar_h = 54
-    bar_y = y0 + LABEL_H - 8 - bar_h
-    c.setFillColor(NAVY)
-    c.rect(x0 + 6, bar_y, LABEL_W - 12, bar_h, fill=1, stroke=0)
+    # siyah başlık barı
+    bar_h = 40
+    bar_y = y0 + LABEL_H - 12 - bar_h
+    c.setFillColorRGB(0, 0, 0)
+    c.rect(x0 + 10, bar_y, LABEL_W - 20, bar_h, fill=1, stroke=0)
     c.setFillColorRGB(1, 1, 1)
-    c.setFont('DejaVu-Bold', 26)
-    tw = c.stringWidth('KOLİ ETİKETİ', 'DejaVu-Bold', 26)
-    c.drawString(x0 + (LABEL_W - tw) / 2, bar_y + (bar_h - 26) / 2 + 4, 'KOLİ ETİKETİ')
+    c.setFont('Etiket-Bold', 20)
+    tw = c.stringWidth('KOLİ ETİKETİ', 'Etiket-Bold', 20)
+    c.drawString(x0 + (LABEL_W - tw) / 2, bar_y + 13, 'KOLİ ETİKETİ')
 
-    x = x0 + 26
-    inner_w = LABEL_W - 52
-    y = bar_y - 26
-    alt_sinir = y0 + 44  # tarih satırının üstü — içerik buranın altına inmemeli
-
-    def alan(baslik, deger, size=19, bold=False, bosluk=9):
-        nonlocal y
-        c.setFillColor(GREY)
-        c.setFont('DejaVu', 10)
-        c.drawString(x, y, baslik)
-        y -= 18
-        c.setFillColorRGB(0, 0, 0)
-        font = 'DejaVu-Bold' if bold else 'DejaVu'
-        fs = fit(deger, font, size, inner_w, 9)
-        c.setFont(font, fs)
-        c.drawString(x, y, deger)
-        y -= (fs + bosluk)
-
-    alan('MÜŞTERİ NO', item['musteri'] or '-')
-    alan('SİPARİŞ NO', item['sip'])
-    alan('ÜRÜN', item['urun'], size=22, bold=True)
+    # satırlar: sol başlık (küçük, kalın), sağda değer
+    satirlar = [('MÜŞTERİ NO:', item['musteri'] or '-', 'Etiket-Bold', 18),
+                ('SİPARİŞ NO:', item['sip'], 'Etiket-Bold', 18),
+                ('ÜRÜN:', item['urun'], 'Etiket-Bold', 18)]
     for basl, deg in split_kumas(item['kumas']):
-        alan(basl, deg or '-', size=18, bosluk=7)
-    alan('CİLA / AYAK', item['cila'] or '-', size=18)
+        satirlar.append((basl + ':', deg or '-', 'Etiket', 15))
+    satirlar.append(('CİLA/AYAK:', item['cila'] or '-', 'Etiket', 15))
+    satirlar.append(('SİPARİŞ TOPLAMI:', str(item.get('toplam', item['adet'])), 'Etiket-Bold', 18))
 
-    assert y >= alt_sinir - 6, f'İÇERİK TAŞTI: y={y:.0f} < sınır={alt_sinir:.0f}'
+    x_lbl = x0 + 28
+    x_val = x0 + 28 + 104
+    val_w = LABEL_W - 28 - 104 - 28
+    ust = bar_y - 30
+    alt = y0 + 50
+    adim = (ust - alt) / max(len(satirlar) - 1, 1)
+    adim = min(adim, 44)
+    y = ust
+    for basl, deg, font, size in satirlar:
+        c.setFillColorRGB(0, 0, 0)
+        c.setFont('Etiket-Bold', 8)
+        c.drawString(x_lbl, y + 2, basl)
+        fs = fit(deg, font, size, val_w, 8)
+        c.setFont(font, fs)
+        c.drawString(x_val, y, deg)
+        y -= adim
 
     # alt sol: tarih
-    c.setFillColorRGB(0, 0, 0)
-    c.setFont('DejaVu', 11)
-    c.drawString(x, y0 + 26, f'Tarih: {tarih}')
+    c.setFont('Etiket', 9)
+    c.drawString(x0 + 28, y0 + 20, f'Tarih: {tarih}')
 
 
 def main():
