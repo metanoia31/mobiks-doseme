@@ -46,6 +46,8 @@ ap.add_argument('--cila', default='')
 ap.add_argument('--adet', type=int, help='Elle giriş modunda zorunlu; Sayfa1 modunda tümünü ezer')
 ap.add_argument('--etiket-adi', default=None, help='Dosya adındaki ürün bölümü (çoklu kalemde)')
 ap.add_argument('--out-dir', default='.')
+ap.add_argument('--excel', default=None,
+                help='Sayfa1i Google yerine bu .xlsx dosyasından oku (Dosya -> İndir -> .xlsx)')
 args = ap.parse_args()
 
 
@@ -77,7 +79,49 @@ def _sayfa1den_cek(sip, urun_ara):
     return bulunan
 
 
-if args.kumas:   # elle giriş modu
+def _excelden_cek(yol, sip, musteri, urun_ara):
+    """İndirilmiş MOBIKS TAKİP .xlsx dosyasının Sayfa1'inden kalemleri okur.
+
+    Sütunlar başlık adından bulunur (SİP.NO, MÜŞTERİ NO, STOK ADI, CİLA/AYAK RENGİ,
+    KUMAŞ, ADET), böylece sütun sırası değişse de çalışır.
+    """
+    import openpyxl
+    nrm = lambda v: re.sub(r'\s+', ' ', str(v if v is not None else '')).strip()
+    sayi = lambda v: str(int(v)) if isinstance(v, float) and v.is_integer() else nrm(v)
+    ws = openpyxl.load_workbook(yol, data_only=True, read_only=True)['Sayfa1']
+    satirlar = ws.iter_rows(values_only=True)
+    baslik = [nrm(h).upper() for h in next(satirlar)]
+    def kol(ad):
+        if ad not in baslik:
+            raise SystemExit(f'Sayfa1 başlığında {ad!r} sütunu yok')
+        return baslik.index(ad)
+    k_sip, k_mus, k_urun = kol('SİP.NO'), kol('MÜŞTERİ NO'), kol('STOK ADI')
+    k_cila, k_kumas, k_adet = kol('CİLA/AYAK RENGİ'), kol('KUMAŞ'), kol('ADET')
+    bulunan = []
+    for r in satirlar:
+        if sayi(r[k_sip]) != sip:
+            continue
+        if musteri and sayi(r[k_mus]).upper() != musteri.upper():
+            continue
+        if urun_ara and urun_ara.upper() not in nrm(r[k_urun]).upper():
+            continue
+        adet = r[k_adet] if isinstance(r[k_adet], (int, float)) else 0
+        if adet <= 0:
+            continue
+        bulunan.append(dict(sip=sip, musteri=sayi(r[k_mus]), urun=nrm(r[k_urun]),
+                            cila=nrm(r[k_cila]), kumas=nrm(r[k_kumas]), adet=int(adet)))
+    return bulunan
+
+
+if args.excel:   # indirilmiş .xlsx'ten çek
+    ITEMS = _excelden_cek(args.excel, args.sip, args.musteri, args.urun_ara)
+    if not ITEMS:
+        ap.error(f'Excel Sayfa1de eşleşen kalem bulunamadı (sip={args.sip}, '
+                 f'müşteri={args.musteri!r}, ürün filtresi={args.urun_ara!r})')
+    if args.adet:
+        for it in ITEMS:
+            it['adet'] = args.adet
+elif args.kumas:   # elle giriş modu
     if not (args.musteri and args.urun and args.adet):
         ap.error('elle giriş için --musteri, --urun ve --adet gerekli')
     ITEMS = [dict(sip=args.sip, musteri=args.musteri, urun=args.urun,
